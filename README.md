@@ -27,7 +27,8 @@ at startup, then generates enough bits to provide a value of the requested size.
 value := gorng.RandomInt32()
 ```
 
-Or, call the direct interface, optionally providing a seed as well.
+Or, call the direct interface, optionally providing a seed as well.  Allocations
+are shared across calls to the generator's Next*() methods.
 
 ```go
 rng := gorng.NewGenerator(seedBytes)
