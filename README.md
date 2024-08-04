@@ -34,20 +34,31 @@ are shared across calls to the generator's Next*() methods.
 rng := gorng.NewGenerator(seedBytes)
 intValue := rng.NextInt32()
 
-// Caller can specify an arbitrary number of bits.
-var bigValue []byte = rng.Next(289)
+// Caller can specify an arbitrary number of bits, bytes are ordered big-endian,
+// the zero'th element having the MSB.
+var bigValue []byte = rng.NextBits(289)
 ```
 
 
 ## Developing
 
-// TODO clone, build, test .. and agree to the Contributor License Agreement.
+The library is currently under development, but no new features are planned.
+If you find bugs or have suggestions, reach out to the developer through the
+Discussion Forum of the github repo.  For example, maybe I can be convinced
+to add a good, unbiased floating-point representation but that's a non-trivial
+request so I don't plan on adding it without significant demand for it.
 
-... no new features are planned but if you find bugs or have suggestions,
-reach out to the developers through the Discussion Forum of the github repo
 
 ## Alternatives
 
+[SHA-2](https://pkg.go.dev/crypto/sha256) for a golang-native cryptographically
+secure hashing function.  Or [math/rand](https://pkg.go.dev/math/rand) for a
+basic pseudo-random number generator that doesn't need to be shared between
+threads or goroutines, or using appropriate synchronization when doing so.
+
+The main reason to use this library is if you want the consistency and
+repeatability provided by it, and if you want the ease of concurrent use
+from the channel-based API provided by it.
 
 ## References
 
