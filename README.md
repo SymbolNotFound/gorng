@@ -1,6 +1,6 @@
 # gorng (rhymes with "orange")
 
-Golang library of a consistent pseudo-random number generator (PRNG).
+Golang library of an unbiased, repeatable pseudo-random number generator (PRNG).
 
 Implemented with the bit-mixing phase of SHA1, provides a convenient interface
 for generating unbiased samples for a specified number of bits.  Because it is
@@ -8,6 +8,16 @@ based on SHA1 it is both simple and portable, and can be seeded to consistently
 generate the same sequence.  However, this is not a cryptographically secure
 random number generator -- the SHA-1 algorithm has known attacks and the custom
 implementation here has not been hardened against collisions or timing attacks.
+
+This library is best suited to the generation of random bits/bytes for puzzle
+and casual game implementations, card or dice games with large domains, contexts
+where an RNG can be kept in sync and/or reset to the beginning of the sequence.
+
+It also provides a channel-based API for multi-threaded contexts where one RNG
+is being shared among many goroutines, which can be very useful for simulating
+playouts or random walks in a state graph, if predictable ordering is not
+important but thread-safety is.  Callers can simply read from the provided
+channel without needing to coordinate via an explicit synchronization primitive.
 
 ## Using the RNG
 
@@ -37,6 +47,20 @@ intValue := rng.NextInt32()
 // Caller can specify an arbitrary number of bits, bytes are ordered big-endian,
 // the zero'th element having the MSB.
 var bigValue []byte = rng.NextBits(289)
+```
+
+If multiple concurrent threads or goroutines all need access to the random
+number generator, use the channel-based API for thread-safe access.  The above
+interface also usees an underlying channel, but using the channel directly
+allows for involving it in other concurrency patterns such as `select {...}`.
+
+```go
+rng := gorng.NewGenerator(seedBytes)
+var size int = 1337 // any number of bits can be specified
+source := rng.Channel(size) // the channel will generate only for that size
+var byteslice []byte = <-source // the channel type is (chan []byte)
+
+source2 := rng.Channel(32) // multiple channels can coexist with different sizes
 ```
 
 
