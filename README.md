@@ -63,6 +63,15 @@ var byteslice []byte = <-source // the channel type is (chan []byte)
 source2 := rng.Channel(32) // multiple channels can coexist with different sizes
 ```
 
+### Sample programs
+
+<dt>[`cmd/encode`](cmd/encode/main.go)</dt>
+<dd>
+Example of using the SHA-1 hashing to encode the contents of a file or a string
+passed as the first command-line argument.  May be useful by itself as a CLI
+binary, or for adding a Content-Addressable Storage (CAS) layer to your app.
+</dd>
+
 ## Why use this instead of math/rand or crypto/rand?
 
 The main reason to use this library is if you want the consistency and
