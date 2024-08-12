@@ -23,6 +23,7 @@
 package sha1
 
 import (
+	"encoding/binary"
 	"io"
 )
 
@@ -30,6 +31,10 @@ type Hasher interface {
 	io.Writer
 	Hash() Digest
 	Reset()
+}
+
+type Digest interface {
+	Bytes() []byte
 }
 
 // Simple interface for hashing the provided string into a Digest.
@@ -60,6 +65,10 @@ const BLOCK_INTS = 16
 // Reading and writing happens in uint32-sized pieces (aligning |bytes| at 4).
 const BLOCKITEM_MASK = 0b11
 
+// The digest is always 20 bytes, grouped into 5 32-bit words when computing.
+const DIGEST_BYTES = 20
+const DIGEST_INTS = 5
+
 // Size of the temporary scratch buffer used when processing each block.
 const SCRATCH_INTS = 80
 
@@ -69,26 +78,35 @@ type hasher struct {
 	length uint64
 	// Hashing works on the digest in 32 bit pieces, then
 	// is converted to []byte when finalizing the digest.
-	digest [DIGEST_INTS]uint32
+	chainValue [DIGEST_INTS]uint32
 }
 
+// Constructor for a new Hasher instance.
 func New() Hasher {
 	hasher := new(hasher)
 	hasher.Reset()
 	return hasher
 }
 
+// Reset the length, the contents of the block and the initial digest value.
+//
+// This method is called automatically when Hash() is called, callers only need
+// to use it if a message digest is being abandoned before being fully computed.
 func (state *hasher) Reset() {
 	// Zero out the length and block contents
 	state.length = 0
 	clear(state.block[:])
-	state.digest[0] = 0x67452301
-	state.digest[1] = 0xefcdab89
-	state.digest[2] = 0x98badcfe
-	state.digest[3] = 0x10325476
-	state.digest[4] = 0xc3d2e1f0
+	state.chainValue[0] = 0x67452301
+	state.chainValue[1] = 0xefcdab89
+	state.chainValue[2] = 0x98badcfe
+	state.chainValue[3] = 0x10325476
+	state.chainValue[4] = 0xc3d2e1f0
 }
 
+// Hash the contents of message but leave the buffer ready for additional bytes.
+// That is, it does not add the `1` bit, padding, and message length yet.
+//
+// Satisfies the io.Writer interface similar to other hashing algorithms in Go.
 func (state *hasher) Write(message []byte) (int, error) {
 	msglen := len(message)
 	if msglen == 0 {
@@ -142,15 +160,21 @@ func (state *hasher) copyBytes(message []byte) {
 			value, blocki = 0, blocki+1
 		}
 	}
-	state.block[blocki] = value
+	// Write partial value if the loop above didn't end at a uint32 boundary.
+	if length&BLOCKITEM_MASK != 0 {
+		state.block[blocki] = value
+	}
 	state.length = length
 }
 
 // Applies the SHA-1 hashing algorithm to the contents of the current block.
 // Before calling this function, an initial hash value is populated into the
 // digest and the message bytes are stored as an array of unsigned 32-bit ints.
+// This inner loop is processed for each 64-byte (512-bit) chunk of the message,
+// as defined by the Secure Hash Standard published by NIST in
+// [FIPS PUB 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf).
 //
-// (prepare the message schedule, a scratch space of 80 uint32)
+// (prepare the message schedule W, a scratch space of 80 uint32)
 // W_t = M_t                                                      0 ≤ t ≤ 15
 // W_t = ROTL[1]( W_(t-3) (+) W_(t-8) (+) W(t-14) (+) W(t-16) )  16 ≤ t ≤ 79
 //
@@ -169,79 +193,86 @@ func (state *hasher) copyBytes(message []byte) {
 // b = a
 // a = T
 //
-// where f_t is a function that is selected from one of five possibilties,
-// depending on which of four equal partitions the value t is in,
+// where f_t is a function that is selected from one of four possibilties,
+// depending on which of four equal (80-byte) partitions the value t is in,
 // likewise for the K_t values).
 //
-// ________________________________________________________________
-// :          f_t(x, y, z)                         |      when    :
-// :-----------------------------------------------|--------------:
-// Ch(x, y, z) = (x & y) (+) (~x & z)              |    0 ≤ t ≤ 19
-// Parity(x, y, z) = x (+) y (+) z                 |   20 ≤ t ≤ 39
-// Maj(x, y, z) = (x & y) (+) (x & z) (+) (y & z)  |   40 ≤ t ≤ 59
-// Parity(x, y, z) = x (+) y (+) z                 |   60 ≤ t ≤ 79
+// .___________________________________________________________________________.
+// |                 f_t(x, y, z)                   |    K(t)    |    when     |
+// |------------------------------------------------|------------|-------------|
+// | Ch(x, y, z) = (x & y) (+) (~x & z)             | 0x5A827999 |  0 ≤ t ≤ 19 |
+// | Parity(x, y, z) = x (+) y (+) z                | 0x6ED9EBA1 | 20 ≤ t ≤ 39 |
+// | Maj(x, y, z) = (x & y) (+) (x & z) (+) (y & z) | 0x8F1BBCDC | 40 ≤ t ≤ 59 |
+// | Parity(x, y, z) = x (+) y (+) z                | 0xCA62C1D6 | 60 ≤ t ≤ 79 |
+// '==========================================================================='
 //
 // Before the function returns it will clear the contents of the block and
 // scratch memory passed to it.  The digest value will be updated in-place.
-//
-// Panics if the block hasn't been filled to 64-bytes (16 ints) before calling.
 func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
-	if state.length&63 > 0 {
-		panic("block must be completely filled before processing")
-	}
+	// Prepare the message schedule, expanded from the words of the current block.
 	var tmp uint32
 	for i := 0; i < 16; i++ {
 		scratch[i] = state.block[i]
 	}
 	for i := 16; i < SCRATCH_INTS; i++ {
 		tmp = scratch[i-3] ^ scratch[i-8] ^ scratch[i-14] ^ scratch[i-16]
-		scratch[i] = rotateLeft(tmp, 1)
+		scratch[i] = rotateL(tmp, 1)
 	}
 
-	a := state.digest[0]
-	b := state.digest[1]
-	c := state.digest[2]
-	d := state.digest[3]
-	e := state.digest[4]
+	// Initial values of working memory are based on the chaining value thus far.
+	a := state.chainValue[0]
+	b := state.chainValue[1]
+	c := state.chainValue[2]
+	d := state.chainValue[3]
+	e := state.chainValue[4]
 
-	for i := 0; i < 20; i++ { // Choice(x, y, z) = x ? y : z, K_0
-		tmp = rotateLeft(a, 5) + ((b & c) | (^b & d)) + e + K_0 + scratch[i]
+	// The 80-integer buffer is traversed in four passes instead of one large
+	// for loop with conditional evaluation.  This may result in a larger code
+	// segment but avoids branches and the possibility of branch mis-prediction.
+
+	// constant K_0, Choice(x, y, z) => bitwise{x ? y : z}
+	for i := 0; i < 20; i++ {
+		tmp = rotateL(a, 5) + ((b & c) | (^b & d)) + e + K_0 + scratch[i]
 		e = d
 		d = c
-		c = rotateLeft(b, 30)
+		c = rotateL(b, 30)
 		b = a
 		a = tmp
 	}
-	for i := 20; i < 40; i++ { // Parity(x, y, z), K_1
-		tmp = rotateLeft(a, 5) + (b ^ c ^ d) + e + K_1 + scratch[i]
+	// constant K_1, Parity(x, y, z) => bitwise odd/even `1` bits
+	for i := 20; i < 40; i++ {
+		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_1 + scratch[i]
 		e = d
 		d = c
-		c = rotateLeft(b, 30)
+		c = rotateL(b, 30)
 		b = a
 		a = tmp
 	}
-	for i := 40; i < 60; i++ { // Majority(x, y, z) => max{0, 1}, K_2
-		tmp = rotateLeft(a, 5) + majority(b, c, d) + e + K_2 + scratch[i]
+	// constant K_2, Majority(x, y, z) => bitwise majority 0s or 1s
+	for i := 40; i < 60; i++ {
+		tmp = rotateL(a, 5) + ((b & c) | (b & d) | (c & d)) + e + K_2 + scratch[i]
 		e = d
 		d = c
-		c = rotateLeft(b, 30)
+		c = rotateL(b, 30)
 		b = a
 		a = tmp
 	}
-	for i := 60; i < 80; i++ { // Parity(x, y, z), K_1
-		tmp = rotateLeft(a, 5) + (b ^ c ^ d) + e + K_3 + scratch[i]
+	// constant K_3, Parity(x, y, z) => bitwise odd/even `1` bits
+	for i := 60; i < 80; i++ {
+		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_3 + scratch[i]
 		e = d
 		d = c
-		c = rotateLeft(b, 30)
+		c = rotateL(b, 30)
 		b = a
 		a = tmp
 	}
 
-	state.digest[0] += a
-	state.digest[1] += b
-	state.digest[2] += c
-	state.digest[3] += d
-	state.digest[4] += e
+	// Add the resulting values back to the digest (truncated to 2^32)
+	state.chainValue[0] += a
+	state.chainValue[1] += b
+	state.chainValue[2] += c
+	state.chainValue[3] += d
+	state.chainValue[4] += e
 
 	// Clear the block and scratch space after processing.
 	clear(state.block[:]) // With the bits zeroed, padding can be automatic.
@@ -255,12 +286,9 @@ const (
 	K_3 uint32 = 0xca62c1d6
 )
 
-func rotateLeft(value uint32, bits int) uint32 {
+// Convenience function, rotates the bits of an unsigned 32-bit integer.
+func rotateL(value uint32, bits int) uint32 {
 	return uint32(value<<bits) | uint32(value>>(32-bits))
-}
-
-func majority(x, y, z uint32) uint32 {
-	return (x & y) | (x & z) | (y & z)
 }
 
 // Performs the final post-processing and returns the message hash as a Digest.
@@ -278,18 +306,21 @@ func (state *hasher) Hash() Digest {
 	}
 
 	state.block[BLOCK_INTS-2] = uint32(length >> 29)
-	state.block[BLOCK_INTS-1] = uint32(length&0x1FFF) << 3
+	state.block[BLOCK_INTS-1] = uint32(length&0x1FFFFFFF) << 3
 	state.length += 64 - (state.length & 63)
 	state.mixBits(scratch)
 
-	digest := newDigest(state.digest)
+	digest := newDigest(state.chainValue)
 	state.Reset()
 	return digest
 }
 
-func write1bit(block *[BLOCK_INTS]uint32, pos byte) {
-	blocki := pos >> 2
-	switch pos & BLOCKITEM_MASK {
+// Writes a single `1` bit after the message contents.  The blockpos is the
+// length of the written contents of block, 0 <= blockpos < BLOCK_INTS.
+// This is only ever called when finishing
+func write1bit(block *[BLOCK_INTS]uint32, blockpos byte) {
+	blocki := blockpos >> 2
+	switch blockpos & BLOCKITEM_MASK {
 	case 0:
 		block[blocki] = 0x80_00_00_00
 	case 1:
@@ -299,4 +330,23 @@ func write1bit(block *[BLOCK_INTS]uint32, pos byte) {
 	case 3:
 		block[blocki] = (block[blocki] << 8) | 0x00_00_00_80
 	}
+}
+
+// Constructs a Digest result as byte array, from the five integers of the hash.
+func newDigest(ints [DIGEST_INTS]uint32) Digest {
+	digest := digest{}
+	binary.BigEndian.PutUint32(digest.bytes[0:], ints[0])
+	binary.BigEndian.PutUint32(digest.bytes[4:], ints[1])
+	binary.BigEndian.PutUint32(digest.bytes[8:], ints[2])
+	binary.BigEndian.PutUint32(digest.bytes[12:], ints[3])
+	binary.BigEndian.PutUint32(digest.bytes[16:], ints[4])
+	return digest
+}
+
+type digest struct {
+	bytes [DIGEST_BYTES]byte
+}
+
+func (d digest) Bytes() []byte {
+	return d.bytes[:]
 }

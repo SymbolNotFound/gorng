@@ -24,7 +24,8 @@ package sha1_test
 
 import (
 	"bytes"
-	gosha1 "crypto/sha1"
+	gosha1 "crypto/sha1" // for reference implementation
+	"math/rand/v2"       // for generating large messages
 	"testing"
 
 	"github.com/SymbolNotFound/gorng/sha1"
@@ -66,6 +67,43 @@ func Test_Hashing(t *testing.T) {
 			if !bytes.Equal(digest.Bytes(), tt.expected[:]) {
 				t.Errorf("hashing of test '%s' resulted in unexpected hash\ngot:  %v\nwant: %v",
 					tt.name, digest.Bytes(), tt.expected)
+			}
+		})
+	}
+}
+
+// Randomly generates large (multi-block) messages and checks their digest
+// against the value provided by Go's standard library implementation.
+func Test_LargeMonteCarlo(t *testing.T) {
+	tests := []struct {
+		name string
+		size uint64
+	}{
+		{"sub-block", 55},
+		{"tootight", 56},
+		{"large", 1000},
+		{"many many", 1<<20 + 1},
+		{"billions", 3<<30 + 3},
+	}
+	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := make([]byte, tt.size)
+			for i := range input {
+				input[i] = byte(rng.Int32() & 0xFF)
+			}
+
+			gosh := gosha1.Sum([]byte(input))
+			digest, err := sha1.HashBytes(input)
+
+			if err != nil {
+				t.Errorf("error when attempting to hash input '%s':\n%s", input, err)
+			}
+
+			if !bytes.Equal(digest.Bytes(), gosh[:]) {
+				t.Errorf("hashing of test '%s' resulted in unexpected hash\ngot:  %v\nwant: %v",
+					tt.name, digest.Bytes(), gosh[:])
 			}
 		})
 	}

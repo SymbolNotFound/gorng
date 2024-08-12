@@ -1,3 +1,3 @@
 module github.com/SymbolNotFound/gorng
 
-go 1.21.11
+go 1.22 // uses math/rand/v2
