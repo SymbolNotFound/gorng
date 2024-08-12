@@ -142,6 +142,7 @@ func (state *hasher) copyBytes(message []byte) {
 			value, blocki = 0, blocki+1
 		}
 	}
+	state.block[blocki] = value
 	state.length = length
 }
 
@@ -204,7 +205,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	e := state.digest[4]
 
 	for i := 0; i < 20; i++ { // Choice(x, y, z) = x ? y : z, K_0
-		tmp = rotateLeft(a, 5) + ((b & c) ^ (^b & d)) + e + K_0 + scratch[i]
+		tmp = rotateLeft(a, 5) + ((b & c) | (^b & d)) + e + K_0 + scratch[i]
 		e = d
 		d = c
 		c = rotateLeft(b, 30)
