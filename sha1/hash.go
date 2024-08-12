@@ -214,9 +214,14 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	for i := 0; i < 16; i++ {
 		scratch[i] = state.block[i]
 	}
-	for i := 16; i < SCRATCH_INTS; i++ {
+	for i := 16; i < 32; i++ {
 		tmp = scratch[i-3] ^ scratch[i-8] ^ scratch[i-14] ^ scratch[i-16]
 		scratch[i] = rotateL(tmp, 1)
+	}
+	// From 32nd index onwards we can use this alternative that is 64-bit aligned.
+	for i := 32; i < SCRATCH_INTS; i++ {
+		tmp = scratch[i-6] ^ scratch[i-16] ^ scratch[i-28] ^ scratch[i-32]
+		scratch[i] = rotateL(tmp, 2)
 	}
 
 	// Initial values of working memory are based on the chaining value thus far.
@@ -232,7 +237,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 
 	// constant K_0, Choice(x, y, z) => bitwise{x ? y : z}
 	for i := 0; i < 20; i++ {
-		tmp = rotateL(a, 5) + ((b & c) | (^b & d)) + e + K_0 + scratch[i]
+		tmp = rotateL(a, 5) + (d ^ (b & (c ^ d))) + e + K_0 + scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
@@ -250,7 +255,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	}
 	// constant K_2, Majority(x, y, z) => bitwise majority 0s or 1s
 	for i := 40; i < 60; i++ {
-		tmp = rotateL(a, 5) + ((b & c) | (b & d) | (c & d)) + e + K_2 + scratch[i]
+		tmp = rotateL(a, 5) + ((b & c) | (d & (b | c))) + e + K_2 + scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
