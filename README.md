@@ -63,6 +63,35 @@ var byteslice []byte = <-source // the channel type is (chan []byte)
 source2 := rng.Channel(32) // multiple channels can coexist with different sizes
 ```
 
+## Why use this instead of math/rand or crypto/rand?
+
+The main reason to use this library is if you want the consistency and
+repeatability provided by it, and if you want the ease of concurrent use
+from the channel-based API provided by it.  I wrote this out of a need to
+have a random function that I could use in both Go and TypeScript/JavaScript
+and be confident that it would produce the same numbers given the same seed.
+
+I also wanted a random function that I could call from multiple goroutines
+acting as service API handlers, where I wasn't as concerned about repeatability
+but was in need of thread-safety.  There is an example service implementation
+in this repo under /cmd/service that demonstrates using this to get a seed value
+for initializing another generator that can then be used repeatedly.
+
+
+### Alternatives
+
+[SHA-2](https://pkg.go.dev/crypto/sha256) for a golang-native cryptographically
+secure hashing function.  Or an [AES](https://pkg.go.dev/crypto/aes) cipher,
+the algorithm group recommended by NIST -- however it has not been hardened
+against timing attacks whereas the **SHA-\*** implementations have been.
+
+For a basic pseudo-random number generator that doesn't need to be shared
+between threads or goroutines, 
+[math/rand](https://pkg.go.dev/math/rand),
+or when adding your own synchronization constructs around it.  If you want the
+speed of golang's provided RNG it can also be combined with the SafeRandom
+wrapper defined here.
+
 
 ## Developing
 
@@ -73,18 +102,11 @@ to add a good, unbiased floating-point representation but that's a non-trivial
 request so I don't plan on adding it without significant demand for it.
 
 
-## Alternatives
-
-[SHA-2](https://pkg.go.dev/crypto/sha256) for a golang-native cryptographically
-secure hashing function.  Or [math/rand](https://pkg.go.dev/math/rand) for a
-basic pseudo-random number generator that doesn't need to be shared between
-threads or goroutines, or using appropriate synchronization when doing so.
-
-The main reason to use this library is if you want the consistency and
-repeatability provided by it, and if you want the ease of concurrent use
-from the channel-based API provided by it.
-
 ## References
+
+> <a href="https://go.dev/blog/randv2">
+  Golang notes on math/rand/v2 and a retrospective on math/rand
+  </a>
 
 > <a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf">
   SHA-1 (Secure Hash Algorithm 1) specification FIPS PUB 180-4
@@ -99,6 +121,6 @@ from the channel-based API provided by it.
   </a>
 
 > <a href="https://shattered.io/static/shattered.pdf">
-  SHAttered - The First Collision for Full SHA-1
+  SHAttered - The First Collision for Full SHA-1<br />
   (Marc Stevens, Elie Bursztein, Pierre Karpman, Ange Albertini, and Yarik Markov)
   </a>

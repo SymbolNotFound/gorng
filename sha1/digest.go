@@ -29,11 +29,11 @@ const DIGEST_INTS = 5
 
 func newDigest(ints [DIGEST_INTS]uint32) Digest {
 	digest := digest{}
-	binary.LittleEndian.PutUint32(digest.bytes[0:4], ints[0])
-	binary.LittleEndian.PutUint32(digest.bytes[4:8], ints[1])
-	binary.LittleEndian.PutUint32(digest.bytes[8:12], ints[2])
-	binary.LittleEndian.PutUint32(digest.bytes[12:16], ints[3])
-	binary.LittleEndian.PutUint32(digest.bytes[16:20], ints[4])
+	binary.BigEndian.PutUint32(digest.bytes[0:4], ints[0])
+	binary.BigEndian.PutUint32(digest.bytes[4:8], ints[1])
+	binary.BigEndian.PutUint32(digest.bytes[8:12], ints[2])
+	binary.BigEndian.PutUint32(digest.bytes[12:16], ints[3])
+	binary.BigEndian.PutUint32(digest.bytes[16:20], ints[4])
 	return digest
 }
 
