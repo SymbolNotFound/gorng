@@ -54,6 +54,7 @@ func main() {
 			input = []byte(args[0])
 		} else {
 			fmt.Println("Expected a --file flag or a string argument.  Quitting.")
+			fmt.Println()
 			flag.Usage()
 			return
 		}

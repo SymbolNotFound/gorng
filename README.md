@@ -19,9 +19,9 @@ playouts or random walks in a state graph, if predictable ordering is not
 important but thread-safety is.  Callers can simply read from the provided
 channel without needing to coordinate via an explicit synchronization primitive.
 
-## Using the RNG
+## Using the Random Number Generator
 
-Include the module in your source code:
+Include this module in your source code:
 
 ```go
 include (
@@ -30,7 +30,7 @@ include (
 ```
 
 Call the simple interface (the library will allocate memory for you).  This
-uses the default random number generator seeded with the system's current time
+uses the provided random number generator seeded with the system's current time
 at startup, then generates enough bits to provide a value of the requested size.
 
 ```go
@@ -38,7 +38,8 @@ value := gorng.RandomInt32()
 ```
 
 Or, call the direct interface, optionally providing a seed as well.  Allocations
-are shared across calls to the generator's Next*() methods.
+are shared across calls to the generator's methods, which follows the interface
+of Source and Rand defined in `math/rand/v2`.
 
 ```go
 rng := gorng.NewGenerator(seedBytes)
@@ -91,14 +92,14 @@ for initializing another generator that can then be used repeatedly.
 
 [SHA-2](https://pkg.go.dev/crypto/sha256) for a golang-native cryptographically
 secure hashing function.  Or an [AES](https://pkg.go.dev/crypto/aes) cipher,
-the algorithm group recommended by NIST -- however it has not been hardened
-against timing attacks whereas the **SHA-\*** implementations have been.
+the algorithm group recommended by NIST -- however golang's AES has not been
+hardened against timing attacks whereas the *SHA-\** implementations have been.
 
 For a basic pseudo-random number generator that doesn't need to be shared
 between threads or goroutines, 
 [math/rand](https://pkg.go.dev/math/rand),
 or when adding your own synchronization constructs around it.  If you want the
-speed of golang's provided RNG it can also be combined with the SafeRandom
+speed of golang's provided RNG it can also be combined with the `SafeRandom`
 wrapper defined here.
 
 

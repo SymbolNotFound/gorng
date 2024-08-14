@@ -74,8 +74,14 @@ const SCRATCH_INTS = 80
 
 // Internal state for computing the SHA-1 in 512-bit chunks.
 type hasher struct {
-	block  [BLOCK_INTS]uint32
+	// The buffer that bytes are written to when preparing to hash.
+	block [BLOCK_INTS]uint32
+	// Counts total |bytes| written,
+	// for tracking the current offset into block and
+	// for writing |bits| at message post-padding
 	length uint64
+	// Allocate only once the scratch space used for hashing each block.
+	scratch [SCRATCH_INTS]uint32
 	// Hashing works on the digest in 32 bit pieces, then
 	// is converted to []byte when finalizing the digest.
 	chainValue [DIGEST_INTS]uint32
@@ -88,14 +94,28 @@ func New() Hasher {
 	return hasher
 }
 
+func NewFromDigest(digest Digest) Hasher {
+	hasher := new(hasher)
+	bytes := digest.Bytes()
+	hasher.chainValue[0] = binary.BigEndian.Uint32(bytes[0:])
+	hasher.chainValue[1] = binary.BigEndian.Uint32(bytes[4:])
+	hasher.chainValue[2] = binary.BigEndian.Uint32(bytes[8:])
+	hasher.chainValue[3] = binary.BigEndian.Uint32(bytes[12:])
+	hasher.chainValue[4] = binary.BigEndian.Uint32(bytes[16:])
+	return hasher
+}
+
 // Reset the length, the contents of the block and the initial digest value.
+// If this hasher was created from an existing digest, that digest is forgotten
+// and this will reset back to the NIST-defined initial chain value H_0.
 //
 // This method is called automatically when Hash() is called, callers only need
 // to use it if a message digest is being abandoned before being fully computed.
 func (state *hasher) Reset() {
 	// Zero out the length and block contents
-	state.length = 0
 	clear(state.block[:])
+	state.length = 0
+	clear(state.scratch[:])
 	state.chainValue[0] = 0x67452301
 	state.chainValue[1] = 0xefcdab89
 	state.chainValue[2] = 0x98badcfe
@@ -119,10 +139,9 @@ func (state *hasher) Write(message []byte) (int, error) {
 		state.copyBytes(message)
 	} else { // More bytes in `message` than can fit within the block's capacity,
 		// process enough to fill the current buffer and then process the rest.
-		scratch := new([SCRATCH_INTS]uint32)
 		index := 64 - offset
 		state.copyBytes(message[:index])
-		state.mixBits(scratch)
+		state.mixBits()
 		index += offset
 
 		// Repeatedly process while there are more message bytes to write.
@@ -133,7 +152,7 @@ func (state *hasher) Write(message []byte) (int, error) {
 			}
 			state.copyBytes(message[index:next])
 			if next-index == BLOCK_BYTES {
-				state.mixBits(scratch)
+				state.mixBits()
 			}
 			index = next
 		}
@@ -208,20 +227,26 @@ func (state *hasher) copyBytes(message []byte) {
 //
 // Before the function returns it will clear the contents of the block and
 // scratch memory passed to it.  The digest value will be updated in-place.
-func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
+func (state *hasher) mixBits() {
 	// Prepare the message schedule, expanded from the words of the current block.
 	var tmp uint32
 	for i := 0; i < 16; i++ {
-		scratch[i] = state.block[i]
+		state.scratch[i] = state.block[i]
 	}
 	for i := 16; i < 32; i++ {
-		tmp = scratch[i-3] ^ scratch[i-8] ^ scratch[i-14] ^ scratch[i-16]
-		scratch[i] = rotateL(tmp, 1)
+		tmp = (state.scratch[i-3] ^
+			state.scratch[i-8] ^
+			state.scratch[i-14] ^
+			state.scratch[i-16])
+		state.scratch[i] = rotateL(tmp, 1)
 	}
 	// From 32nd index onwards we can use this alternative that is 64-bit aligned.
 	for i := 32; i < SCRATCH_INTS; i++ {
-		tmp = scratch[i-6] ^ scratch[i-16] ^ scratch[i-28] ^ scratch[i-32]
-		scratch[i] = rotateL(tmp, 2)
+		tmp = (state.scratch[i-6] ^
+			state.scratch[i-16] ^
+			state.scratch[i-28] ^
+			state.scratch[i-32])
+		state.scratch[i] = rotateL(tmp, 2)
 	}
 
 	// Initial values of working memory are based on the chaining value thus far.
@@ -237,7 +262,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 
 	// constant K_0, Choice(x, y, z) => bitwise{x ? y : z}
 	for i := 0; i < 20; i++ {
-		tmp = rotateL(a, 5) + (d ^ (b & (c ^ d))) + e + K_0 + scratch[i]
+		tmp = rotateL(a, 5) + (d ^ (b & (c ^ d))) + e + K_0 + state.scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
@@ -246,7 +271,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	}
 	// constant K_1, Parity(x, y, z) => bitwise odd/even `1` bits
 	for i := 20; i < 40; i++ {
-		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_1 + scratch[i]
+		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_1 + state.scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
@@ -255,7 +280,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	}
 	// constant K_2, Majority(x, y, z) => bitwise majority 0s or 1s
 	for i := 40; i < 60; i++ {
-		tmp = rotateL(a, 5) + ((b & c) | (d & (b | c))) + e + K_2 + scratch[i]
+		tmp = rotateL(a, 5) + ((b & c) | (d & (b | c))) + e + K_2 + state.scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
@@ -264,7 +289,7 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	}
 	// constant K_3, Parity(x, y, z) => bitwise odd/even `1` bits
 	for i := 60; i < 80; i++ {
-		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_3 + scratch[i]
+		tmp = rotateL(a, 5) + (b ^ c ^ d) + e + K_3 + state.scratch[i]
 		e = d
 		d = c
 		c = rotateL(b, 30)
@@ -280,8 +305,8 @@ func (state *hasher) mixBits(scratch *[SCRATCH_INTS]uint32) {
 	state.chainValue[4] += e
 
 	// Clear the block and scratch space after processing.
-	clear(state.block[:]) // With the bits zeroed, padding can be automatic.
-	clear(scratch[:])     // Not strictly necessary but leaves less evidence.
+	clear(state.block[:])   // With the bits zeroed, padding can be automatic.
+	clear(state.scratch[:]) // Not strictly necessary but leaves less evidence.
 }
 
 const (
@@ -299,24 +324,25 @@ func rotateL(value uint32, bits int) uint32 {
 // Performs the final post-processing and returns the message hash as a Digest.
 func (state *hasher) Hash() Digest {
 	length := state.length
-	scratch := new([SCRATCH_INTS]uint32)
 
-	// write a single `1` bit before the rest of the padding.
+	// Write a single `1` bit before the rest of the padding.
 	write1bit(&state.block, byte(length&63))
 
+	// Leave room at the end of the final block for the message length.
 	if length&63 >= 56 {
 		// current block is too full for length value, mix bits and use next block.
 		state.length += 64 - (length & 63)
-		state.mixBits(scratch)
+		state.mixBits()
 	}
 
 	state.block[BLOCK_INTS-2] = uint32(length >> 29)
 	state.block[BLOCK_INTS-1] = uint32(length&0x1FFFFFFF) << 3
 	state.length += 64 - (state.length & 63)
-	state.mixBits(scratch)
+	state.mixBits()
 
 	digest := newDigest(state.chainValue)
-	state.Reset()
+	state.length = length
+	clear(state.block[:])
 	return digest
 }
 
